@@ -1,0 +1,162 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no" />
+  <title>V m2 — Solo Air Drums</title>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/tone/14.8.49/Tone.js"></script>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; font-family: system-ui, sans-serif; user-select: none; }
+    body { background: #090d16; color: #f8fafc; min-height: 100vh; display: flex; flex-direction: column; justify-content: space-between; padding: 14px; text-align: center; }
+    h1 { font-size: 1.4rem; color: #38bdf8; }
+    .sub { color: #94a3b8; font-size: 0.85rem; margin-top: 4px; }
+    .badge { display: inline-block; padding: 4px 10px; border-radius: 8px; font-size: 0.75rem; font-weight: 700; margin-top: 6px; background: #1e293b; color: #fbbf24; }
+
+    #start-screen { position: fixed; inset: 0; background: #090d16; display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 24px; z-index: 10; }
+    .big-btn { background: #2563eb; color: #fff; border: none; padding: 18px 32px; font-size: 1.15rem; font-weight: 800; border-radius: 16px; margin-top: 20px; width: 100%; max-width: 300px; }
+
+    .drum-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; margin: 12px 0; flex-grow: 1; }
+    .pad { background: #1e293b; border: 2px solid #334155; border-radius: 16px; display: flex; flex-direction: column; align-items: center; justify-content: center; font-size: 1.1rem; font-weight: 800; transition: 0.06s; }
+    .pad span { font-size: 0.72rem; color: #94a3b8; font-weight: 500; margin-top: 3px; }
+    .pad.active { background: #38bdf8; color: #090d16; border-color: #fff; transform: scale(0.96); }
+    .pad.aimed { border-color: #38bdf8; box-shadow: inset 0 0 12px rgba(56,189,248,0.35); }
+
+    .controls { background: #111827; padding: 12px; border-radius: 16px; border: 1px solid #1f2937; }
+    .cal-btn { background: #d97706; color: #fff; border: none; padding: 12px; font-size: 0.95rem; font-weight: 700; border-radius: 12px; width: 100%; margin-bottom: 10px; }
+    .slider-row { display: flex; align-items: center; justify-content: space-between; font-size: 0.85rem; gap: 10px; }
+    input[type="range"] { flex-grow: 1; }
+    .hidden { display: none !important; }
+  </style>
+</head>
+<body>
+
+  <div id="start-screen">
+    <h1>🥁 V m2 AIR DRUMS</h1>
+    <p class="sub">Tap below to start audio & motion sensors</p>
+    <button class="big-btn" onclick="initApp()">▶ START AIR DRUMS</button>
+  </div>
+
+  <div>
+    <h1>🥁 V m2 AIR DRUMS</h1>
+    <div class="badge" id="sensor-badge">Sensor: Waiting...</div>
+    <p class="sub" id="status">Aiming: SNARE</p>
+  </div>
+
+  <div class="drum-grid">
+    <div class="pad" id="pad-hihat" ontouchstart="hitDrum('hihat', 0.8)">HI-HAT<span>Left + Tilt Up</span></div>
+    <div class="pad" id="pad-crash" ontouchstart="hitDrum('crash', 0.9)">CRASH<span>Center + Tilt Up</span></div>
+    <div class="pad" id="pad-snare" ontouchstart="hitDrum('snare', 0.9)">SNARE<span>Left Zone</span></div>
+    <div class="pad" id="pad-tom" ontouchstart="hitDrum('tom', 0.9)">HIGH TOM<span>Right + Tilt Up</span></div>
+    <div class="pad" id="pad-kick" ontouchstart="hitDrum('kick', 1.0)">BASS KICK<span>Center Zone</span></div>
+    <div class="pad" id="pad-floortom" ontouchstart="hitDrum('floortom', 0.9)">FLOOR TOM<span>Right Zone</span></div>
+  </div>
+
+  <div class="controls">
+    <button class="cal-btn" onclick="calibrate()">🎯 Calibrate Center (0°)</button>
+    <div class="slider-row">
+      <span>Swing Force: <b id="sens-val">12</b></span>
+      <input type="range" min="4" max="25" value="12" oninput="sensitivity = Number(this.value); document.getElementById('sens-val').innerText = this.value;" />
+    </div>
+  </div>
+
+  <script>
+    let centerAlpha = 0, currentAlpha = 0, currentBeta = 0, lastBeta = 0;
+    let sensitivity = 12, lastHit = 0, gotMotion = false;
+    let synths = {};
+
+    async function initApp() {
+      await Tone.start();
+
+      synths.kick = new Tone.MembraneSynth({ pitchDecay: 0.05, octaves: 6, envelope: { attack: 0.001, decay: 0.35, sustain: 0 } }).toDestination();
+      synths.snare = new Tone.NoiseSynth({ noise: { type: 'white' }, envelope: { attack: 0.001, decay: 0.18, sustain: 0 } }).toDestination();
+      synths.hihat = new Tone.MetalSynth({ frequency: 250, envelope: { attack: 0.001, decay: 0.07, release: 0.01 }, harmonicity: 5.1, modulationIndex: 32, resonance: 4000, octaves: 1.5 }).toDestination();
+      synths.crash = new Tone.MetalSynth({ frequency: 300, envelope: { attack: 0.001, decay: 0.55, release: 0.2 }, harmonicity: 5.1, modulationIndex: 40, resonance: 3000, octaves: 1.5 }).toDestination();
+      synths.tom = new Tone.MembraneSynth({ pitchDecay: 0.03, octaves: 3, envelope: { attack: 0.001, decay: 0.25, sustain: 0 } }).toDestination();
+      synths.floortom = new Tone.MembraneSynth({ pitchDecay: 0.04, octaves: 4, envelope: { attack: 0.001, decay: 0.3, sustain: 0 } }).toDestination();
+
+      document.getElementById('start-screen').classList.add('hidden');
+      startSensors();
+    }
+
+    function startSensors() {
+      const badge = document.getElementById('sensor-badge');
+
+      setTimeout(() => {
+        if (!gotMotion) {
+          badge.innerText = "⚠️ Sensor Blocked by Chrome (Enable flag or use HTTPS)";
+          badge.style.color = "#f87171";
+        }
+      }, 2000);
+
+      window.addEventListener('deviceorientation', (e) => {
+        if (e.alpha === null) return;
+        gotMotion = true;
+        badge.innerText = "✅ Sensors ACTIVE (Swing in Air!)";
+        badge.style.color = "#4ade80";
+
+        // Fallback flick detection using rapid tilt change (beta)
+        const tiltSpeed = Math.abs(e.beta - lastBeta);
+        lastBeta = e.beta;
+        currentAlpha = e.alpha;
+        currentBeta = e.beta;
+
+        const target = getZone();
+        document.getElementById('status').innerText = `Aiming: ${target.toUpperCase()} (${Math.round(currentAlpha)}°)`;
+        document.querySelectorAll('.pad').forEach(p => p.classList.remove('aimed'));
+        document.getElementById('pad-' + target)?.classList.add('aimed');
+
+        const now = Date.now();
+        if (tiltSpeed > sensitivity * 1.4 && now - lastHit > 130) {
+          lastHit = now;
+          hitDrum(target, Math.min(1, tiltSpeed / 40));
+        }
+      });
+
+      window.addEventListener('devicemotion', (e) => {
+        const acc = e.acceleration || e.accelerationIncludingGravity;
+        if (!acc || (acc.x === null && acc.y === null)) return;
+        gotMotion = true;
+        badge.innerText = "✅ Sensors ACTIVE (Swing in Air!)";
+        badge.style.color = "#4ade80";
+
+        const force = Math.sqrt((acc.x || 0)**2 + (acc.y || 0)**2 + (acc.z || 0)**2);
+        const now = Date.now();
+
+        if (force > sensitivity && now - lastHit > 120) {
+          lastHit = now;
+          hitDrum(getZone(), Math.min(1, Math.max(0.25, force / 32)));
+        }
+      });
+    }
+
+    function getZone() {
+      let diff = ((currentAlpha - centerAlpha + 540) % 360) - 180;
+      const isUp = currentBeta > 32;
+      if (diff > 20) return isUp ? 'hihat' : 'snare';
+      if (diff < -20) return isUp ? 'tom' : 'floortom';
+      return isUp ? 'crash' : 'kick';
+    }
+
+    function hitDrum(drum, vel = 0.85) {
+      if (navigator.vibrate) navigator.vibrate(25);
+      const pad = document.getElementById('pad-' + drum);
+      if (pad) {
+        pad.classList.add('active');
+        setTimeout(() => pad.classList.remove('active'), 100);
+      }
+      if (!synths.kick) return;
+      if (drum === 'kick') synths.kick.triggerAttackRelease('C1', '8n', undefined, vel);
+      if (drum === 'snare') synths.snare.triggerAttackRelease('8n', undefined, vel);
+      if (drum === 'hihat') synths.hihat.triggerAttackRelease('32n', undefined, vel * 0.65);
+      if (drum === 'crash') synths.crash.triggerAttackRelease('8n', undefined, vel * 0.75);
+      if (drum === 'tom') synths.tom.triggerAttackRelease('G2', '8n', undefined, vel);
+      if (drum === 'floortom') synths.floortom.triggerAttackRelease('C2', '8n', undefined, vel);
+    }
+
+    function calibrate() {
+      centerAlpha = currentAlpha;
+      if (navigator.vibrate) navigator.vibrate([30, 40, 30]);
+    }
+  </script>
+</body>
+</html>
