@@ -4,7 +4,6 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no" />
   <title>V m2 — Solo Air Drums</title>
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/tone/14.8.49/Tone.js"></script>
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; font-family: system-ui, sans-serif; user-select: none; }
     body { background: #090d16; color: #f8fafc; min-height: 100vh; display: flex; flex-direction: column; justify-content: space-between; padding: 14px; text-align: center; }
@@ -13,7 +12,7 @@
     .badge { display: inline-block; padding: 4px 10px; border-radius: 8px; font-size: 0.75rem; font-weight: 700; margin-top: 6px; background: #1e293b; color: #fbbf24; }
 
     #start-screen { position: fixed; inset: 0; background: #090d16; display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 24px; z-index: 10; }
-    .big-btn { background: #2563eb; color: #fff; border: none; padding: 18px 32px; font-size: 1.15rem; font-weight: 800; border-radius: 16px; margin-top: 20px; width: 100%; max-width: 300px; }
+    .big-btn { background: #2563eb; color: #fff; border: none; padding: 18px 32px; font-size: 1.15rem; font-weight: 800; border-radius: 16px; margin-top: 20px; width: 100%; max-width: 300px; box-shadow: 0 8px 25px rgba(37,99,235,0.4); }
 
     .drum-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; margin: 12px 0; flex-grow: 1; }
     .pad { background: #1e293b; border: 2px solid #334155; border-radius: 16px; display: flex; flex-direction: column; align-items: center; justify-content: center; font-size: 1.1rem; font-weight: 800; transition: 0.06s; }
@@ -32,7 +31,7 @@
 
   <div id="start-screen">
     <h1>🥁 V m2 AIR DRUMS</h1>
-    <p class="sub">Tap below to start audio & motion sensors</p>
+    <p class="sub">Turn off Silent/Vibrate mode & raise volume.<br>Tap below to unlock sound & sensors!</p>
     <button class="big-btn" onclick="initApp()">▶ START AIR DRUMS</button>
   </div>
 
@@ -43,12 +42,12 @@
   </div>
 
   <div class="drum-grid">
-    <div class="pad" id="pad-hihat" ontouchstart="hitDrum('hihat', 0.8)">HI-HAT<span>Left + Tilt Up</span></div>
-    <div class="pad" id="pad-crash" ontouchstart="hitDrum('crash', 0.9)">CRASH<span>Center + Tilt Up</span></div>
-    <div class="pad" id="pad-snare" ontouchstart="hitDrum('snare', 0.9)">SNARE<span>Left Zone</span></div>
-    <div class="pad" id="pad-tom" ontouchstart="hitDrum('tom', 0.9)">HIGH TOM<span>Right + Tilt Up</span></div>
-    <div class="pad" id="pad-kick" ontouchstart="hitDrum('kick', 1.0)">BASS KICK<span>Center Zone</span></div>
-    <div class="pad" id="pad-floortom" ontouchstart="hitDrum('floortom', 0.9)">FLOOR TOM<span>Right Zone</span></div>
+    <div class="pad" onclick="hitDrum('hihat', 0.9)" id="pad-hihat">HI-HAT<span>Left + Tilt Up</span></div>
+    <div class="pad" onclick="hitDrum('crash', 1.0)" id="pad-crash">CRASH<span>Center + Tilt Up</span></div>
+    <div class="pad" onclick="hitDrum('snare', 1.0)" id="pad-snare">SNARE<span>Left Zone</span></div>
+    <div class="pad" onclick="hitDrum('tom', 1.0)" id="pad-tom">HIGH TOM<span>Right + Tilt Up</span></div>
+    <div class="pad" onclick="hitDrum('kick', 1.0)" id="pad-kick">BASS KICK<span>Center Zone</span></div>
+    <div class="pad" onclick="hitDrum('floortom', 1.0)" id="pad-floortom">FLOOR TOM<span>Right Zone</span></div>
   </div>
 
   <div class="controls">
@@ -60,33 +59,95 @@
   </div>
 
   <script>
+    let audioCtx = null;
+    let noiseBuffer = null;
     let centerAlpha = 0, currentAlpha = 0, currentBeta = 0, lastBeta = 0;
     let sensitivity = 12, lastHit = 0, gotMotion = false;
-    let synths = {};
 
-    async function initApp() {
-      await Tone.start();
+    function initApp() {
+      // Unlock native Web Audio Context on user gesture
+      const AudioContext = window.AudioContext || window.webkitAudioContext;
+      audioCtx = new AudioContext();
+      if (audioCtx.state === 'suspended') audioCtx.resume();
 
-      synths.kick = new Tone.MembraneSynth({ pitchDecay: 0.05, octaves: 6, envelope: { attack: 0.001, decay: 0.35, sustain: 0 } }).toDestination();
-      synths.snare = new Tone.NoiseSynth({ noise: { type: 'white' }, envelope: { attack: 0.001, decay: 0.18, sustain: 0 } }).toDestination();
-      synths.hihat = new Tone.MetalSynth({ frequency: 250, envelope: { attack: 0.001, decay: 0.07, release: 0.01 }, harmonicity: 5.1, modulationIndex: 32, resonance: 4000, octaves: 1.5 }).toDestination();
-      synths.crash = new Tone.MetalSynth({ frequency: 300, envelope: { attack: 0.001, decay: 0.55, release: 0.2 }, harmonicity: 5.1, modulationIndex: 40, resonance: 3000, octaves: 1.5 }).toDestination();
-      synths.tom = new Tone.MembraneSynth({ pitchDecay: 0.03, octaves: 3, envelope: { attack: 0.001, decay: 0.25, sustain: 0 } }).toDestination();
-      synths.floortom = new Tone.MembraneSynth({ pitchDecay: 0.04, octaves: 4, envelope: { attack: 0.001, decay: 0.3, sustain: 0 } }).toDestination();
+      // Pre-generate white noise buffer for Snare, Hi-Hat & Crash
+      const bufferSize = audioCtx.sampleRate * 1.5;
+      noiseBuffer = audioCtx.createBuffer(1, bufferSize, audioCtx.sampleRate);
+      const data = noiseBuffer.getChannelData(0);
+      for (let i = 0; i < bufferSize; i++) data[i] = Math.random() * 2 - 1;
 
       document.getElementById('start-screen').classList.add('hidden');
+      hitDrum('kick', 0.9); // Test sound immediately on start!
       startSensors();
+    }
+
+    function playTone(startFreq, endFreq, duration, vel, type = 'sine') {
+      const t = audioCtx.currentTime;
+      const osc = audioCtx.createOscillator();
+      const gain = audioCtx.createGain();
+      osc.type = type;
+      osc.frequency.setValueAtTime(startFreq, t);
+      osc.frequency.exponentialRampToValueAtTime(endFreq, t + duration);
+
+      gain.gain.setValueAtTime(vel * 1.2, t);
+      gain.gain.exponentialRampToValueAtTime(0.001, t + duration);
+
+      osc.connect(gain);
+      gain.connect(audioCtx.destination);
+      osc.start(t);
+      osc.stop(t + duration);
+    }
+
+    function playNoise(filterFreq, filterType, duration, vel) {
+      const t = audioCtx.currentTime;
+      const noise = audioCtx.createBufferSource();
+      noise.buffer = noiseBuffer;
+
+      const filter = audioCtx.createBiquadFilter();
+      filter.type = filterType;
+      filter.frequency.setValueAtTime(filterFreq, t);
+
+      const gain = audioCtx.createGain();
+      gain.gain.setValueAtTime(vel * 1.1, t);
+      gain.gain.exponentialRampToValueAtTime(0.001, t + duration);
+
+      noise.connect(filter);
+      filter.connect(gain);
+      gain.connect(audioCtx.destination);
+      noise.start(t);
+      noise.stop(t + duration);
+    }
+
+    function hitDrum(drum, vel = 0.9) {
+      if (audioCtx && audioCtx.state === 'suspended') audioCtx.resume();
+      if (navigator.vibrate) navigator.vibrate(25);
+
+      const pad = document.getElementById('pad-' + drum);
+      if (pad) {
+        pad.classList.add('active');
+        setTimeout(() => pad.classList.remove('active'), 100);
+      }
+
+      if (!audioCtx) return;
+
+      if (drum === 'kick') {
+        playTone(150, 38, 0.35, vel, 'sine');
+      } else if (drum === 'snare') {
+        playTone(210, 90, 0.12, vel * 0.7, 'triangle');
+        playNoise(1200, 'highpass', 0.22, vel);
+      } else if (drum === 'hihat') {
+        playNoise(7000, 'highpass', 0.08, vel * 0.8);
+      } else if (drum === 'crash') {
+        playNoise(4500, 'highpass', 0.65, vel * 0.9);
+      } else if (drum === 'tom') {
+        playTone(220, 95, 0.28, vel, 'sine');
+      } else if (drum === 'floortom') {
+        playTone(140, 58, 0.34, vel, 'sine');
+      }
     }
 
     function startSensors() {
       const badge = document.getElementById('sensor-badge');
-
-      setTimeout(() => {
-        if (!gotMotion) {
-          badge.innerText = "⚠️ Sensor Blocked by Chrome (Enable flag or use HTTPS)";
-          badge.style.color = "#f87171";
-        }
-      }, 2000);
 
       window.addEventListener('deviceorientation', (e) => {
         if (e.alpha === null) return;
@@ -94,7 +155,6 @@
         badge.innerText = "✅ Sensors ACTIVE (Swing in Air!)";
         badge.style.color = "#4ade80";
 
-        // Fallback flick detection using rapid tilt change (beta)
         const tiltSpeed = Math.abs(e.beta - lastBeta);
         lastBeta = e.beta;
         currentAlpha = e.alpha;
@@ -108,7 +168,7 @@
         const now = Date.now();
         if (tiltSpeed > sensitivity * 1.4 && now - lastHit > 130) {
           lastHit = now;
-          hitDrum(target, Math.min(1, tiltSpeed / 40));
+          hitDrum(target, Math.min(1, tiltSpeed / 38));
         }
       });
 
@@ -124,7 +184,7 @@
 
         if (force > sensitivity && now - lastHit > 120) {
           lastHit = now;
-          hitDrum(getZone(), Math.min(1, Math.max(0.25, force / 32)));
+          hitDrum(getZone(), Math.min(1, Math.max(0.3, force / 30)));
         }
       });
     }
@@ -135,22 +195,6 @@
       if (diff > 20) return isUp ? 'hihat' : 'snare';
       if (diff < -20) return isUp ? 'tom' : 'floortom';
       return isUp ? 'crash' : 'kick';
-    }
-
-    function hitDrum(drum, vel = 0.85) {
-      if (navigator.vibrate) navigator.vibrate(25);
-      const pad = document.getElementById('pad-' + drum);
-      if (pad) {
-        pad.classList.add('active');
-        setTimeout(() => pad.classList.remove('active'), 100);
-      }
-      if (!synths.kick) return;
-      if (drum === 'kick') synths.kick.triggerAttackRelease('C1', '8n', undefined, vel);
-      if (drum === 'snare') synths.snare.triggerAttackRelease('8n', undefined, vel);
-      if (drum === 'hihat') synths.hihat.triggerAttackRelease('32n', undefined, vel * 0.65);
-      if (drum === 'crash') synths.crash.triggerAttackRelease('8n', undefined, vel * 0.75);
-      if (drum === 'tom') synths.tom.triggerAttackRelease('G2', '8n', undefined, vel);
-      if (drum === 'floortom') synths.floortom.triggerAttackRelease('C2', '8n', undefined, vel);
     }
 
     function calibrate() {
